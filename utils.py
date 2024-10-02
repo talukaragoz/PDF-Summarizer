@@ -100,3 +100,13 @@ def get_extracted_text(pdf_id: str):
         cursor.execute('SELECT text FROM extracted_text WHERE pdf_id = ?', (pdf_id,))
         result = cursor.fetchone()
         return result[0] if result else None
+
+def clear_db():
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM faq_cache')
+        cursor.execute('DELETE FROM extracted_text')
+        cursor.execute('DELETE FROM pdfs')
+        
+        conn.commit()

@@ -20,6 +20,7 @@ async def lifespan(app: FastAPI):
     init_db()
     yield
     # Shutdown
+    clear_db()
 
 app = FastAPI(lifespan=lifespan)
 
