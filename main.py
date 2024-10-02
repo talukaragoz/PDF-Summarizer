@@ -3,10 +3,9 @@ import os
 import shutil
 from pypdf import PdfReader
 import asyncio
+from contextlib import asynccontextmanager
 
-from utils import generate_pdf_id, extract_text_from_pdf
-
-app = FastAPI()
+from utils import *
 
 GEMINI_KEY = open("environment_variables/GEMINI_KEY.txt", "r").read()
 
@@ -15,23 +14,22 @@ pdf_metadata = {}
 
 MAX_FILE_SIZE = 10 * 1024 * 1024    # 10 MB
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup initialization of database
+    init_db()
+    yield
+    # Shutdown
+
+app = FastAPI(lifespan=lifespan)
+
 
 async def pdf_text_extraction(pdf_id: str, path: str):
     try:
         pdf_text = await extract_text_from_pdf(path)
-        text_file_path = f"data/extracted/{pdf_id}_text.txt"
-        
-        os.makedirs(os.path.dirname(text_file_path), exist_ok=True)
-        
-        with open(text_file_path, "w", encoding="utf-8") as f:
-            f.write(pdf_text)
-            
-        pdf_metadata[pdf_id]["text_location"] = text_file_path
-        pdf_metadata[pdf_id]["extraction_complete"] = True
-        
+        insert_extracted_text(pdf_id, pdf_text)
     except Exception as e:
         print(f"Error extracting text from PDF {pdf_id}: {str(e)}")
-        pdf_metadata[pdf_id]["extraction_complete"] = False
 
 
 @app.post("/v1/pdf")
@@ -47,7 +45,6 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="File size exceeds the maximum limit of 10 MB")
 
     pdf_id = generate_pdf_id()
-    print(pdf_id)
     safe_filename = "".join([c for c in file.filename if c.isalnum() or c in ('-', '_', '.')])
     file_path = f"data/input/{pdf_id}_{safe_filename}"
 
@@ -69,13 +66,7 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
             os.remove(file_path)
             raise HTTPException(status_code=400, detail="Invalid PDF file")
         
-        # Store metadata
-        pdf_metadata[pdf_id] = {
-            "original_filename": file.filename,
-            "file_location": file_path,
-            "file_size": file_size,
-            "page_count" : page_count
-        }
+        insert_pdf_metadata(pdf_id, file.filename, file_path, file_size, page_count)
         
         background_tasks.add_task(pdf_text_extraction, pdf_id, file_path)
         
