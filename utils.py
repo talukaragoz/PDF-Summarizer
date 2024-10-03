@@ -3,8 +3,12 @@ import asyncio
 from pypdf import PdfReader
 import sqlite3
 from contextlib import contextmanager
+from pydantic import BaseModel
 
 DATABASE_NAME = "data/pdf_chat.db"
+
+class ChatRequest(BaseModel):
+    prompt: str
 
 def generate_pdf_id() -> str:
     return str(uuid.uuid4())

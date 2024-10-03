@@ -4,10 +4,12 @@ import shutil
 from pypdf import PdfReader
 import asyncio
 from contextlib import asynccontextmanager
+import google.generativeai as genai
 
 from utils import *
 
 GEMINI_KEY = open("environment_variables/GEMINI_KEY.txt", "r").read()
+genai.configure(api_key=GEMINI_KEY)
 
 # Current storage of PDFs
 pdf_metadata = {}
@@ -72,10 +74,7 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
         background_tasks.add_task(pdf_text_extraction, pdf_id, file_path)
         
         return {
-            "pdf_id": pdf_id,
-            "original_filename": file.filename,
-            "file_size": file_size,
-            "page_count" : page_count
+            "pdf_id": pdf_id
         }
     except IOError as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
@@ -83,6 +82,23 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
-@app.get("/v1/chat/{pdf_id}")
-async def pdf_chat(pdf_id):
-    return {"message": "Hello World"}
+@app.post("/v1/chat/{pdf_id}")
+async def pdf_chat(pdf_id: str, request: ChatRequest):
+    pdf_metadata = get_pdf_metadata(pdf_id)
+    if not pdf_metadata:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    
+    extracted_text = get_extracted_text(pdf_id)
+    if not extracted_text:
+        raise HTTPException(status_code=404, detail="Extracted text not found")
+    
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        full_prompt = f"Based on the following text from a PDF, please answer this question: {request.prompt}\n\nPDF Content: {extracted_text[:30000]}\n\nPlease provide your answer in plaintext only. Do not provide any markdown features in the text- not even line breaks!"
+        
+        response = model.generate_content(full_prompt)
+        
+        return {"response": response.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred while processing your request: {str(e)}") 
