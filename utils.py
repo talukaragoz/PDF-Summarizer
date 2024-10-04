@@ -114,3 +114,25 @@ def clear_db():
         cursor.execute('DELETE FROM pdfs')
         
         conn.commit()
+
+def cache_query_response(pdf_id: str, query: str, response: str):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+        INSERT INTO faq_cache (pdf_id, query, response)
+        VALUES (?, ?, ?)
+        ''', (pdf_id, query, response))
+        conn.commit()
+
+def get_cached_response(pdf_id: str, query: str):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+        SELECT response
+        FROM faq_cache
+        WHERE pdf_id = ? AND query = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        ''', (pdf_id, query))
+        result = cursor.fetchone()
+        return result[0] if result else None

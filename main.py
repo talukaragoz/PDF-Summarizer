@@ -92,12 +92,19 @@ async def pdf_chat(pdf_id: str, request: ChatRequest):
     if not extracted_text:
         raise HTTPException(status_code=404, detail="Extracted text not found")
     
+    # Check if the response is cached
+    cached_response = get_cached_response(pdf_id, request.prompt)
+    if cached_response:
+        return {"response": cached_response, "source": "cache"}
+    
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        full_prompt = f"Based on the following text from a PDF, please answer this question: {request.prompt}\n\nPDF Content: {extracted_text[:30000]}\n\nPlease provide your answer in plaintext only. Do not provide any markdown features in the text- not even line breaks!"
+        full_prompt = f"Based on the following text from a PDF, please answer this question: {request.prompt}\n\nPDF Content: {extracted_text[:30000]}\n\nPlease provide your answer in plaintext only. Do not provide any markdown features in the text- not even new lines!"
         
         response = model.generate_content(full_prompt)
+        
+        cache_query_response(pdf_id, request.prompt, response.text)
         
         return {"response": response.text}
     except Exception as e:
