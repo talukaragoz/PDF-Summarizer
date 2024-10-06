@@ -141,7 +141,6 @@ async def clear_db():
         DELETE FROM extracted_text;
         DELETE FROM pdfs;
         ''')
-        
     # Remove Chroma persist directories
     shutil.rmtree('data/chroma', ignore_errors=True)
 

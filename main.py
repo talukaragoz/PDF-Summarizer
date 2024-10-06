@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks
 import os
 import shutil
+import asyncio
 from pypdf import PdfReader
 from contextlib import asynccontextmanager
 import google.generativeai as genai
@@ -8,6 +9,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from utils import *
+from error_handling import setup_error_handling
 
 GEMINI_KEY = open("environment_variables/GEMINI_KEY.txt", "r").read()
 genai.configure(api_key=GEMINI_KEY)
@@ -20,10 +22,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     yield
     # Shutdown
-    await clear_db()
+    # await clear_db()
 
 app = FastAPI(lifespan=lifespan)
-
+setup_error_handling(app)            # Middleware for app
 
 @app.post("/v1/pdf")
 async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
@@ -122,5 +124,7 @@ async def pdf_chat(pdf_id: str, request: ChatRequest):
         await cache_query_response(pdf_id, request.prompt, response.text)
         
         return {"response": response.text}
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Request timed out")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred while processing your request: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred while processing your request: {str(e)}")
