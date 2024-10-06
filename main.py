@@ -2,11 +2,8 @@ from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks
 import os
 import shutil
 from pypdf import PdfReader
-import asyncio
 from contextlib import asynccontextmanager
 import google.generativeai as genai
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
@@ -26,28 +23,6 @@ async def lifespan(app: FastAPI):
     await clear_db()
 
 app = FastAPI(lifespan=lifespan)
-
-
-async def pdf_text_extraction(pdf_id: str, path: str):
-    try:
-        loader = PyPDFLoader(path)
-        pages = loader.load_and_split()
-        
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        docs = text_splitter.split_documents(pages)
-        
-        embeddings = HuggingFaceEmbeddings()
-        
-        # Use a unique persist_directory for each PDF
-        persist_directory = f"data/chroma/{pdf_id}"
-        vectorstore = Chroma.from_documents(docs, embeddings, persist_directory=persist_directory)
-        vectorstore.persist()
-        
-        full_text = "\n".join([page.page_content for page in pages])
-        
-        await insert_extracted_text(pdf_id, full_text, persist_directory)
-    except Exception as e:
-        print(f"Error extracting text from PDF {pdf_id}: {str(e)}")
 
 
 @app.post("/v1/pdf")
@@ -73,6 +48,18 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         
+        # Calculate hash and check for duplicates
+        content_hash = calculate_pdf_hash(file_path)
+        existing_pdf = await get_pdf_by_hash(content_hash)
+        
+        print(existing_pdf)
+        
+        if existing_pdf:
+            os.remove(file_path)  # Remove the duplicate file
+            return {
+                "pdf_id": existing_pdf[0]
+            }
+        
         # Extract metadata
         with open(file_path, "rb") as f:
             pdf = PdfReader(f)
@@ -84,7 +71,7 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
             os.remove(file_path)
             raise HTTPException(status_code=400, detail="Invalid PDF file")
         
-        await insert_pdf_metadata(pdf_id, file.filename, file_path, file_size, page_count)
+        await insert_pdf_metadata(pdf_id, file.filename, content_hash, file_path, file_size, page_count)
         
         background_tasks.add_task(pdf_text_extraction, pdf_id, file_path)
         
