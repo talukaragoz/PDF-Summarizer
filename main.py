@@ -19,10 +19,10 @@ MAX_FILE_SIZE = 10 * 1024 * 1024    # 10 MB
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup initialization of database
-    init_db()
+    await init_db()
     yield
     # Shutdown
-    clear_db()
+    await clear_db()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -30,7 +30,7 @@ app = FastAPI(lifespan=lifespan)
 async def pdf_text_extraction(pdf_id: str, path: str):
     try:
         pdf_text = await extract_text_from_pdf(path)
-        insert_extracted_text(pdf_id, pdf_text)
+        await insert_extracted_text(pdf_id, pdf_text)
     except Exception as e:
         print(f"Error extracting text from PDF {pdf_id}: {str(e)}")
 
@@ -69,7 +69,7 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
             os.remove(file_path)
             raise HTTPException(status_code=400, detail="Invalid PDF file")
         
-        insert_pdf_metadata(pdf_id, file.filename, file_path, file_size, page_count)
+        await insert_pdf_metadata(pdf_id, file.filename, file_path, file_size, page_count)
         
         background_tasks.add_task(pdf_text_extraction, pdf_id, file_path)
         
@@ -84,18 +84,18 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
 
 @app.post("/v1/chat/{pdf_id}")
 async def pdf_chat(pdf_id: str, request: ChatRequest):
-    pdf_metadata = get_pdf_metadata(pdf_id)
+    pdf_metadata = await get_pdf_metadata(pdf_id)
     if not pdf_metadata:
         raise HTTPException(status_code=404, detail="PDF not found")
     
-    extracted_text = get_extracted_text(pdf_id)
+    extracted_text = await get_extracted_text(pdf_id)
     if not extracted_text:
         raise HTTPException(status_code=404, detail="Extracted text not found")
     
     # Check if the response is cached
-    cached_response = get_cached_response(pdf_id, request.prompt)
-    if cached_response:
-        return {"response": cached_response, "source": "cache"}
+    cahced_response = await get_cached_response(pdf_id, request.prompt)
+    if cahced_response:
+        return {"response": cahced_response}
     
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -104,7 +104,7 @@ async def pdf_chat(pdf_id: str, request: ChatRequest):
         
         response = model.generate_content(full_prompt)
         
-        cache_query_response(pdf_id, request.prompt, response.text)
+        await cache_query_response(pdf_id, request.prompt, response.text)
         
         return {"response": response.text}
     except Exception as e:
