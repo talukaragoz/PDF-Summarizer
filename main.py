@@ -5,14 +5,15 @@ from pypdf import PdfReader
 import asyncio
 from contextlib import asynccontextmanager
 import google.generativeai as genai
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from utils import *
 
 GEMINI_KEY = open("environment_variables/GEMINI_KEY.txt", "r").read()
 genai.configure(api_key=GEMINI_KEY)
-
-# Current storage of PDFs
-pdf_metadata = {}
 
 MAX_FILE_SIZE = 10 * 1024 * 1024    # 10 MB
 
@@ -29,8 +30,22 @@ app = FastAPI(lifespan=lifespan)
 
 async def pdf_text_extraction(pdf_id: str, path: str):
     try:
-        pdf_text = await extract_text_from_pdf(path)
-        await insert_extracted_text(pdf_id, pdf_text)
+        loader = PyPDFLoader(path)
+        pages = loader.load_and_split()
+        
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = text_splitter.split_documents(pages)
+        
+        embeddings = HuggingFaceEmbeddings()
+        
+        # Use a unique persist_directory for each PDF
+        persist_directory = f"data/chroma/{pdf_id}"
+        vectorstore = Chroma.from_documents(docs, embeddings, persist_directory=persist_directory)
+        vectorstore.persist()
+        
+        full_text = "\n".join([page.page_content for page in pages])
+        
+        await insert_extracted_text(pdf_id, full_text, persist_directory)
     except Exception as e:
         print(f"Error extracting text from PDF {pdf_id}: {str(e)}")
 
@@ -92,6 +107,13 @@ async def pdf_chat(pdf_id: str, request: ChatRequest):
     if not extracted_text:
         raise HTTPException(status_code=404, detail="Extracted text not found")
     
+    word_count = len(extracted_text.split())
+    
+    vectorstore_dir = await get_vectorstore_dir(pdf_id)
+    if not extracted_text:
+        raise HTTPException(status_code=404, detail="vectorstore not found")
+    print(vectorstore_dir)
+    
     # Check if the response is cached
     cahced_response = await get_cached_response(pdf_id, request.prompt)
     if cahced_response:
@@ -100,7 +122,13 @@ async def pdf_chat(pdf_id: str, request: ChatRequest):
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        full_prompt = f"Based on the following text from a PDF, please answer this question: {request.prompt}\n\nPDF Content: {extracted_text[:30000]}\n\nPlease provide your answer in plaintext only. Do not provide any markdown features in the text- not even new lines!"
+        # Load the vectorstore from the persist_directory
+        embeddings = HuggingFaceEmbeddings()
+        vectorstore = Chroma(persist_directory=vectorstore_dir, embedding_function=embeddings)
+        
+        # Use vectorstore to find relevant chunks
+        relevant_chunks = vectorstore.similarity_search(request.prompt, k=5)
+        full_prompt = f"Based on the following text from a PDF, please answer this question: {request.prompt}\n\nSome relevant context: {relevant_chunks}\n\nPDF Content with word count {word_count}: {extracted_text[:30000]}\n\nPlease provide your answer in plaintext only. Do not provide any markdown features in the text- not even new lines!"
         
         response = model.generate_content(full_prompt)
         

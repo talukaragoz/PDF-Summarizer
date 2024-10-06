@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from scipy.spatial.distance import cosine
+import shutil
 
 DATABASE_NAME = "data/pdf_chat.db"
 model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
@@ -60,6 +61,7 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS extracted_text (
             pdf_id TEXT PRIMARY KEY,
             text TEXT NOT NULL,
+            vectorstore_dir TEXT NOT NULL,
             extraction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (pdf_id) REFERENCES pdfs (id)
         );
@@ -85,12 +87,12 @@ async def insert_pdf_metadata(pdf_id: str, filename: str, file_path: str, file_s
         ''', (pdf_id, filename, file_path, file_size, page_count))
         await conn.commit()
 
-async def insert_extracted_text(pdf_id: str, text: str):
+async def insert_extracted_text(pdf_id: str, text: str, vectorstore_dir):
     async with get_async_db_connection() as conn:
         await conn.execute('''
-        INSERT INTO extracted_text (pdf_id, text)
-        VALUES (?, ?)
-        ''', (pdf_id, text))
+        INSERT INTO extracted_text (pdf_id, text, vectorstore_dir)
+        VALUES (?, ?, ?)
+        ''', (pdf_id, text, vectorstore_dir))
         await conn.commit()
 
 async def get_pdf_metadata(pdf_id: str):
@@ -104,6 +106,12 @@ async def get_extracted_text(pdf_id: str):
             result = await cursor.fetchone()
             return result[0] if result else None
 
+async def get_vectorstore_dir(pdf_id: str):
+    async with get_async_db_connection() as conn:
+        async with conn.execute('SELECT vectorstore_dir FROM extracted_text WHERE pdf_id = ?', (pdf_id,)) as cursor:
+            result = await cursor.fetchone()
+            return result[0] if result else None
+
 async def clear_db():
     async with get_async_db_connection() as conn:
         await conn.executescript('''
@@ -111,6 +119,9 @@ async def clear_db():
         DELETE FROM extracted_text;
         DELETE FROM pdfs;
         ''')
+        
+    # Remove Chroma persist directories
+    shutil.rmtree('data/chroma', ignore_errors=True)
 
 async def cache_query_response(pdf_id: str, query: str, response: str):
     embedding = model.encode(query)
