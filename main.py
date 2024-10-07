@@ -3,6 +3,7 @@ import os
 import shutil
 import asyncio
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 from contextlib import asynccontextmanager
 import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
@@ -50,8 +51,8 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
     logger.info(f"Generated PDF ID: {pdf_id}")
     safe_filename = "".join([c for c in file.filename if c.isalnum() or c in ('-', '_', '.')])
     file_path = f"data/input/{pdf_id}_{safe_filename}"
-
-    try:
+        
+    try: 
         # Ensure the directory exists
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         logger.debug(f"Created directory: {os.path.dirname(file_path)}")
@@ -77,10 +78,15 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
             logger.info(f"Saved file to: {file_path}")
         
         # Extract metadata
-        with open(file_path, "rb") as f:
-            pdf = PdfReader(f)
-            page_count = len(pdf.pages)
-        logger.info(f"PDF page count: {page_count}")
+        try:
+            with open(file_path, "rb") as f:
+                pdf = PdfReader(f)
+                page_count = len(pdf.pages)
+            logger.info(f"PDF page count: {page_count}")
+        except PdfReadError as e:
+            logger.error(f"Invalid PDF file: {file_path}. Error: {str(e)}")
+            os.remove(file_path)
+            raise HTTPException(status_code=400, detail="Invalid PDF file")
         
         # Checking if stored PDF is functional or not
         try:
@@ -102,7 +108,8 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
     except IOError as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error during PDF ingestion: {str(e)}")
+        logger.error(f"Unexpected error during PDF ingestion: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during PDF ingestion: {str(e)}")
 
 
 @app.post("/v1/chat/{pdf_id}")
