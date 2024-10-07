@@ -8,18 +8,33 @@ from contextlib import asynccontextmanager
 import google.generativeai as genai
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from dotenv import load_dotenv
 
 from utils import *
 from error_handling import setup_error_handling
 from logging_config import logger
 
-GEMINI_KEY = open("environment_variables/GEMINI_KEY.txt", "r").read()
+# Load environment variables from .env file
+load_dotenv()
+
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_KEY:
+    raise ValueError("GEMINI_API_KEY is not set in the environment variables")
 genai.configure(api_key=GEMINI_KEY)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024    # 10 MB
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Asynchronous context manager for FastAPI application lifecycle.
+    
+    Args:
+        app (FastAPI): The FastAPI application instance.
+    
+    Yields:
+        None
+    """
     # Startup initialization of database
     logger.info("Starting up the application")
     await init_db()
@@ -33,6 +48,19 @@ setup_error_handling(app)            # Middleware for app
 
 @app.post("/v1/pdf")
 async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
+    """
+    Endpoint for ingesting a PDF file.
+    
+    Args:
+        file (UploadFile): The uploaded PDF file.
+        background_tasks (BackgroundTasks): FastAPI background tasks handler.
+    
+    Returns:
+        dict: A dictionary containing the PDF ID.
+    
+    Raises:
+        HTTPException: If the file is not a PDF, exceeds size limit, or other errors occur.
+    """
     logger.info(f"Received PDF ingestion request for file: {file.filename}")
     
     if file.content_type != "application/pdf":
@@ -114,6 +142,19 @@ async def pdf_ingestion(file: UploadFile, background_tasks: BackgroundTasks):
 
 @app.post("/v1/chat/{pdf_id}")
 async def pdf_chat(pdf_id: str, request: ChatRequest):
+    """
+    Endpoint for chatting with a specific PDF.
+    
+    Args:
+        pdf_id (str): The unique identifier of the PDF.
+        request (ChatRequest): The chat request containing the user's prompt.
+    
+    Returns:
+        dict: A dictionary containing the AI-generated response.
+    
+    Raises:
+        HTTPException: If the PDF or extracted text is not found, or other errors occur.
+    """
     logger.info(f"Received chat request for PDF ID: {pdf_id}")
     
     pdf_metadata = await get_pdf_metadata(pdf_id)
